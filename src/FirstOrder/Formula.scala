@@ -1,9 +1,5 @@
 package FirstOrder
 
-import java.util
-
-import sun.awt.X11.Depth
-
 import scala.language.implicitConversions
 import scala.util.Random
 
@@ -17,8 +13,7 @@ object BinOp extends Enumeration {
   val Conj = Val("∧")
   val Disj = Val("∨")
   val Impl = Val("→")
-  //  val Xor =Val("⊕")
-  val binOps = Array(Conj,Disj,Impl)
+  val binOps = Array(Conj, Disj, Impl)
 }
 
 object Op extends Enumeration {
@@ -32,22 +27,22 @@ object Op extends Enumeration {
   val Neg = Val("¬")
 }
 
-import BinOp._
-import Op._
+import FirstOrder.BinOp._
+import FirstOrder.Op._
 
 sealed trait Formula
 
-sealed trait Quantifier {
-  def s: Symb;
+sealed trait Quantifier extends Formula {
+  def s: Symb
 
   def expr: Formula
 }
 
-case class ForAll(s: Symb, expr: Formula) extends Formula with Quantifier {
+case class ForAll(s: Symb, expr: Formula) extends Quantifier {
   override def toString: String = "∀" + s.n + "." + expr.toString
 }
 
-case class Exist(s: Symb, expr: Formula) extends Formula with Quantifier {
+case class Exist(s: Symb, expr: Formula) extends Quantifier {
   override def toString: String = "∃" + s.n + "." + expr.toString
 }
 
@@ -67,7 +62,7 @@ case class App2(binOp: BinOp, a1: Formula, a2: Formula) extends Formula {
 }
 
 case class App1(op: Op, a1: Formula) extends Formula {
-  override def toString: String = op.repr + a1.toString
+  override def toString: String = op.repr + "(" + a1.toString + ")"
 }
 
 case class Const(v:Boolean) extends Formula {
@@ -119,7 +114,7 @@ object IndexedFormula {
     indexedFormula match {
       case IApp2(op, f1, f2) =>
         op match {
-          case (Conj | Disj) =>
+          case Conj | Disj =>
             f1 match {
               case IExist(expr) => IExist(IApp2(op, expr, increaseIndex(f2)))
               case IForAll(expr) => IForAll(IApp2(op, expr, increaseIndex(f2)))
@@ -127,10 +122,10 @@ object IndexedFormula {
                 f2 match {
                   case IExist(expr) => IExist(IApp2(op, increaseIndex(f1), expr))
                   case IForAll(expr) => IForAll(IApp2(op, increaseIndex(f1), expr))
-                  case _ => indexedFormula
+                  case _ => IApp2(op, quantorOut(f1), quantorOut(f2))
                 }
             }
-          case (Impl) =>
+          case Impl =>
             f1 match {
               case IExist(expr) => IForAll(IApp2(op, expr, increaseIndex(f2)))
               case IForAll(expr) => IExist(IApp2(op, expr, increaseIndex(f2)))
@@ -138,36 +133,45 @@ object IndexedFormula {
                 f2 match {
                   case IExist(expr) => IExist(IApp2(op, increaseIndex(f1), expr))
                   case IForAll(expr) => IForAll(IApp2(op, increaseIndex(f1), expr))
-                  case _ => indexedFormula
+                  case _ => IApp2(op, quantorOut(f1), quantorOut(f2))
                 }
             }
         }
-      case IApp1(op, a1) => {
+      case IApp1(op, a1) =>
         op match {
-          case I => indexedFormula
+          case I => IApp1(op, IApp1(op, a1))
           case Neg => a1 match {
-            case IExist(expr) => IForAll(IApp1(op, expr))
-            case IForAll(expr) => IExist(IApp1(op, expr))
-            case _ => indexedFormula
+            case IExist(expr) => IForAll(IApp1(op, quantorOut(expr)))
+            case IForAll(expr) => IExist(IApp1(op, quantorOut(expr)))
+            case ff: IndexedFormula => IApp1(Neg, quantorOut(ff))
           }
         }
-      }
       case IExist(expr) => IExist(quantorOut(expr))
       case IForAll(expr) => IForAll(quantorOut(expr))
       case _ => indexedFormula
     }
+  }
+
+  def toPrenex(indexedFormula: IndexedFormula): IndexedFormula = {
+    var orig, res = indexedFormula
+    var trip = 0
+    do {
+      orig = res
+      res = quantorOut(orig)
+    } while (res != orig)
+    res
   }
 }
 
 object Formula {
   def toIndexed(formula: Formula): (IndexedFormula, List[String]) = {
     def depth(s:List[String], needle:String):Int = {
-      var c=0;
+      var c = 0
       for (v <- s) {
-        c+=1;
-        if (v == needle) return c;
+        c += 1
+        if (v == needle) return c
       }
-      return 0;
+      0
     }
     def symbF(n: String, stor: List[String]): (ISymb, List[String]) = {
       val d = depth(stor,n)
@@ -185,10 +189,10 @@ object Formula {
         case Symb(n) => symbF(n, stor)
         case Predicate(name, args) => (IPredicate(name, args.map(s => symbF(s.n, stor)._1)), stor)
         case App2(binOp, a1, a2) =>
-          val i1 = toIndexedInner(a1, stor);
-          val i2 = toIndexedInner(a2, stor);
+          val i1 = toIndexedInner(a1, stor)
+          val i2 = toIndexedInner(a2, stor)
           (IApp2(binOp, i1._1, i2._1), i1._2 ++ i2._2)
-        case App1(op, a1) => val f = toIndexedInner(a1, stor); (IApp1(op, f ._1), f ._2)
+        case App1(op, a1) => val f = toIndexedInner(a1, stor); (IApp1(op, f._1), f._2)
         case Const(v) => (IConst(v),stor)
       }
     }
@@ -211,33 +215,34 @@ object Formula {
   }
 
   def randomFormula(num_vars:Int, num_preds:Int, depth: Int) :Formula = {
-    object FormulaMaker{
-      private val vars = Random.shuffle(('a' to 'z').toList).take(num_vars).map((a:Char)=> a.toString).toArray
+    object FormulaMaker {
+      private val vars = Random.shuffle(('a' to 'z').toList).take(num_vars).map((a: Char) => a.toString).toArray
       private var current_var = 0;
 
-      private val preds = Random.shuffle(('A'to 'Z').toList).take(num_preds).map((a:Char)=> a.toString).toArray
+      private val preds = Random.shuffle(('A' to 'Z').toList).take(num_preds).map((a: Char) => a.toString).toArray.
+        zip(List.fill(num_preds)(Random.between(1, 3)))
 
-      class ExprFactory{
+      class ExprFactory {
         private var free = vars.toSet
         private var bound = Array[String]();
 
-        def make(depth:Int) : Formula = {
-          if (depth > 0 )
-            builders(Random.between(0,builders.length-3))(this,depth)
+        def make(depth: Int): Formula = {
+          if (depth > 0)
+            builders(Random.between(0, builders.length))(this, depth)
           else
-            builders(4)(this,depth) // Just make a predicate
+            predBuilder(this) // Just make a predicate
         }
 
         def add_binder():Option[Symb]={
           val n = randomFromSet(free)
-          n.map((x:String) =>{
-            free = free.removedAll(Seq(x));
-            bound = bound.appended(x);;
+          n.map((x:String) => {
+            free = free.removedAll(Seq(x))
+            bound = bound.appended(x)
             Symb(x)
           })
         }
 
-        def sym_builder():Symb = {
+        def sym_builder(): Symb = {
           safeGetRandElemOf(bound) match {
             case Some(value) => Symb(value)
             case None => Symb(getRandElemOf(vars))
@@ -245,23 +250,33 @@ object Formula {
         }
       };
 
+      def predBuilder(em: ExprFactory): Predicate = {
+        current_var = (current_var + 1) % num_preds
+        val (n, arity) = preds(current_var)
+        Predicate(n, List.fill[Symb](arity)(em.sym_builder()))
+      }
+
       private val builders = Array(
         // nonterminals
-        (em:ExprFactory, depth:Int) => em.add_binder() map (ForAll(_, em.make(depth - 1))),
-        (em:ExprFactory, depth:Int) => em.add_binder() map (Exist(_, em.make(depth-1))),
-        (em:ExprFactory, depth:Int) => {
-          App2(binOps(Random.between(0, binOps.length)),
-          em.make(depth-1), em.make(depth-1))
+        (em: ExprFactory, depth: Int) =>
+          em.add_binder() match {
+            case Some(sym) => ForAll(sym, em.make(depth - 1))
+            case None => predBuilder(em)
+          },
+        (em: ExprFactory, depth: Int) =>
+          em.add_binder() match {
+            case Some(sym) => Exist(sym, em.make(depth - 1))
+            case None => predBuilder(em)
+          },
+        (em: ExprFactory, depth: Int) =>
+          App2(binOps(Random.between(0, binOps.length)), em.make(depth - 1), em.make(depth - 1)),
+        (em: ExprFactory, depth: Int) => {
+          App1(Neg, em.make(depth - 1))
         },
-        (em:ExprFactory, depth:Int) => {App1(Neg,em.make(depth-1))},
-        // terminals
-        (em:ExprFactory, depth:Int) => {current_var= (current_var + 1 )% num_preds;Predicate(preds(current_var),
-          List.fill[Symb](Random.between(1,3))(em.sym_builder()))},
-        (em:ExprFactory, depth:Int) => Const(Random.nextBoolean())
       )
 
       def run(): Formula = {
-        val em = new ExprFactory;
+        val em = new ExprFactory
         em.make(depth)
       }
     }
